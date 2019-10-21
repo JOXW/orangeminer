@@ -1,0 +1,252 @@
+// Copyright (c) 2019, Zpalmtree
+//
+// Please see the included LICENSE file for more information.
+
+#include <iostream>
+
+#include "ArgonVariants/Variants.h"
+#include "Config/Config.h"
+#include "Config/Constants.h"
+#include "MinerManager/MinerManager.h"
+#include "Miner/GetConfig.h"
+#include "PoolCommunication/PoolCommunication.h"
+#include "Types/Pool.h"
+#include "Utilities/ColouredMsg.h"
+#include "Utilities/GetChar.h"
+
+#if defined(X86_OPTIMIZATIONS)
+#include "cpu_features/include/cpuinfo_x86.h"
+#endif
+
+#if defined(NVIDIA_ENABLED)
+#include "Backend/Nvidia/NvidiaUtils.h"
+#endif
+
+std::vector<Pool> getDevPools()
+{
+    std::vector<Pool> pools;
+
+    Pool pool1;
+    pool1.host = "pool.securuscoin.org";
+    pool1.port = 5555;
+    pool1.username = "SCR1PahF4AN2DCBDE8MbFFTk6ABFiRe2nUNSP6gVhZANFfx2t6P5t8LKi7J2YkeaaJcR7jR4ZVKK2j88PtVmdAG18SwZKeLBUn";
+    pool1.algorithm = "scr";
+    pool1.niceHash = true;
+
+    pools.push_back(pool1);
+
+    return pools;
+}
+void showLogo()
+{
+std::string logo =
+"\n                                                                               	    \n"
+		"  	                                                    _                       	\n"
+		"                                                           (_)                         \n"
+		"   ___    _ __    __ _   _ __     __ _    ___   _ __ ___    _   _ __     ___   _ __    \n"
+		"  / _ \\  | '__|  / _` | | '_ \\   / _` |  / _ \\ | '_ ` _ \\  | | | '_ \\   / _ \\ | '__|   \n"
+		" | (_) | | |    | (_| | | | | | | (_| | |  __/ | | | | | | | | | | | | |  __/ | |      \n"
+		"  \\___/  |_|     \\__,_| |_| |_|  \\__, |  \\___| |_| |_| |_| |_| |_| |_|  \\___| |_|      \n"
+		"                                  __/ |                                                \n"
+		"                                 |___/                                                 \n"
+		"\n"; 
+
+std::cout << logo;
+}
+
+
+	
+void printWelcomeHeader(MinerConfig config)
+{
+
+showLogo();
+	
+    std::cout << InformationMsg("* ") << WhiteMsg("ABOUT", 25) << InformationMsg("orangeminer [argon2id miner] " + Constants::VERSION) << std::endl
+              << InformationMsg("* ") << WhiteMsg("THREADS", 25) << InformationMsg(config.hardwareConfiguration->cpu.threadCount) << std::endl
+              << InformationMsg("* ") << WhiteMsg("OPTIMIZATION SUPPORT", 25);
+
+    std::vector<std::tuple<Constants::OptimizationMethod, bool>> availableOptimizations;
+
+#if defined(X86_OPTIMIZATIONS)
+
+    static const cpu_features::X86Features features = cpu_features::GetX86Info().features;
+
+    availableOptimizations = {
+        { Constants::AVX512, features.avx512f },
+        { Constants::AVX2, features.avx2 },
+        { Constants::SSE41, features.sse4_1 },
+        { Constants::SSSE3, features.ssse3 },
+        { Constants::SSE2, features.sse2 }
+    };
+
+#elif defined(ARMV8_OPTIMIZATIONS)
+    availableOptimizations = { { Constants::NEON, true} }; /* All ARMv8 cpus have NEON optimizations */
+#else
+    availableOptimizations = {{ Constants::NONE, false } };
+#endif
+
+    for (const auto &[optimization, enabled] : availableOptimizations)
+    {
+        if (enabled)
+        {
+            std::cout << SuccessMsg(Constants::optimizationMethodToString(optimization) + " ");
+        }
+        else
+        {
+            std::cout << WarningMsg(Constants::optimizationMethodToString(optimization) + " ");
+        }
+    }
+
+    std::cout << std::endl << InformationMsg("* ") << WhiteMsg("CHOSEN OPTIMIZATION", 25);
+    
+    if (config.hardwareConfiguration->cpu.optimizationMethod == Constants::AUTO)
+    {
+        std::cout << SuccessMsg(Constants::optimizationMethodToString(config.hardwareConfiguration->cpu.optimizationMethod));
+
+        const auto optimization = getAutoChosenOptimization();
+
+        if (optimization == Constants::NONE)
+        {
+            std::cout << WarningMsg(" (" + Constants::optimizationMethodToString(optimization) + ")") << std::endl;
+        }
+        else
+        {
+            std::cout << SuccessMsg(" (" + Constants::optimizationMethodToString(optimization) + ")") << std::endl;
+        }
+    }
+    else if (config.hardwareConfiguration->cpu.optimizationMethod != Constants::NONE)
+    {
+        std::cout << SuccessMsg(Constants::optimizationMethodToString(config.hardwareConfiguration->cpu.optimizationMethod)) << std::endl;
+    }
+    else
+    {
+        std::cout << WarningMsg(Constants::optimizationMethodToString(config.hardwareConfiguration->cpu.optimizationMethod)) << std::endl;
+    }
+
+#if defined(NVIDIA_ENABLED)
+    printNvidiaHeader();
+#endif
+
+    std::cout << InformationMsg("* ") << WhiteMsg("COMMANDS", 25)
+              << InformationMsg("h") << SuccessMsg("ashrate")
+              << std::endl << std::endl;
+}
+
+void interact(MinerManager &userMinerManager, MinerManager &devMinerManager)
+{
+    std::string input;
+
+    while (true)
+    {
+        const char c = getCharNoBuffer();
+
+        switch(c)
+        {
+            case 'h':
+            {
+                userMinerManager.printStats();
+                break;
+            }
+            default:
+            {
+                std::cout << WhiteMsg("Available commands: ")
+                          << SuccessMsg("h") << WhiteMsg("ashrate") << std::endl;
+            }
+        }
+    }
+}
+
+int main(int argc, char **argv)
+{
+	showLogo();
+	std::cout << InformationMsg("* ") << WhiteMsg("SECURUSCOIN.ORG", 25) << InformationMsg("orangeminer " + Constants::VERSION) << std::endl << std::endl;
+              
+              
+    /* Get the pools, algorithm, etc from the user in some way */
+    MinerConfig config = getMinerConfig(argc, argv);
+
+    /* Set the global config */
+    Config::config.optimizationMethod = config.hardwareConfiguration->cpu.optimizationMethod;
+
+    /* If not initial startup, print welcome header */
+    if (!config.interactive)
+    {
+        printWelcomeHeader(config);
+    }
+
+    const auto userPoolManager = std::make_shared<PoolCommunication>(config.pools);
+
+    /* Get the dev pools */
+    std::vector<Pool> devPools = getDevPools();
+
+    const auto devPoolManager = std::make_shared<PoolCommunication>(devPools);
+
+    /* Setup a manager for the user pools and the dev pools */
+    MinerManager userMinerManager(userPoolManager, config.hardwareConfiguration, false);
+    MinerManager devMinerManager(devPoolManager, config.hardwareConfiguration, true);
+
+    /* A cycle lasts 100 minutes */
+    const auto cycleLength = std::chrono::minutes(100);
+
+    /* We mine for the dev for DEV_FEE_PERCENT off the 100 minutes */
+    const auto devMiningTime = std::chrono::seconds(static_cast<uint8_t>(240));
+
+    /* We mine for the user for the rest of the time */
+    const auto userMiningTime = cycleLength - devMiningTime;
+
+    if (Constants::DEV_FEE_PERCENT == 0)
+    {
+        std::cout << WarningMsg("Dev fee disabled :( Consider making a one off donation to SCR1PahF4AN2DCBDE8MbFFTk6ABFiRe2nUNSP6gVhZANFfx2t6P5t8LKi7J2YkeaaJcR7jR4ZVKK2j88PtVmdAG18SwZKeLBUn") << std::endl;
+
+        /* No dev fee, just start the users mining */
+        userMinerManager.start();
+
+        std::thread interactionThread(interact, std::ref(userMinerManager), std::ref(devMinerManager));
+
+        /* Wait forever */
+        std::promise<void>().get_future().wait();
+    }
+    else
+    {
+        std::random_device device;
+        std::mt19937 rng(device());
+        std::uniform_int_distribution<std::mt19937::result_type> dist(10, 60);
+
+        /* Start mining for the user */
+        userMinerManager.start();
+
+        std::thread interactionThread(interact, std::ref(userMinerManager), std::ref(devMinerManager));
+
+        /* 100 minute rounds, alternating between users pool and devs pool */
+        while (true)
+        {
+            /* Mine for the user for between 10 and 60 minutes before swapping to the dev pool */
+            auto userMiningFirstHalf = std::chrono::minutes(dist(rng));
+
+            std::this_thread::sleep_for(userMiningFirstHalf);
+
+            /* Stop mining for the user */
+            userMinerManager.stop();
+
+            std::cout << InformationMsg("=== Started mining to the development pool - Thank you for supporting orangeminer! ===") << std::endl;
+            std::cout << InformationMsg("=== This will last for " + std::to_string(devMiningTime.count()) + " seconds. (Every 100 minutes) ===") << std::endl;
+
+            /* Start mining for the dev */
+            devMinerManager.start();
+
+            /* Mine for devMiningTime seconds */
+            std::this_thread::sleep_for(devMiningTime);
+
+            /* Stop mining for the dev. */
+            devMinerManager.stop();
+
+            std::cout << InformationMsg("=== Regular mining resumed. Thank you for supporting orangeminer! ===") << std::endl;
+
+            /* Start mining for the user */
+            userMinerManager.start();
+
+            /* Then mine for the remaining 90 to 40 minutes on the user pool again */
+            std::this_thread::sleep_for(userMiningTime - userMiningFirstHalf);
+        }
+    }
+}
