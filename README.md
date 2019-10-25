@@ -8,6 +8,8 @@ A CPU and NVIDIA miner for Securus / Argon2id .
 
 [Go here to download the latest release.](https://github.com/JOXW/orangeminer/releases) 
 
+maybe you need some dll files -> https://support.microsoft.com/en-us/help/2977003/the-latest-supported-visual-c-downloads
+
 If you prefer to compile yourself, read on. This can result in increased hashrates in some cases.
 
 ## Algorithms Supported
